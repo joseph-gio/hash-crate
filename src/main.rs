@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::io::BufRead;
