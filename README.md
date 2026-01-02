@@ -16,7 +16,7 @@ It is designed for CI environments and large workspaces where you want to:
 
 ## Why?
 
-Cargo does not provide a built-in way to compute a content-based hash for a single crate and only the dependencies it actually uses.
+Cargo does not provide a built-in way to compute a content-based hash for a single crate in a workspace, considering only the dependencies it actually uses.
 
 `hash-crate` solves this by:
 
