@@ -159,6 +159,10 @@ On large applications (1000+ dependencies), runtime is typically dominated by ca
 
 - This tool is intentionally strict and conservative.
 
+## License
+
+MIT OR Apache-2.0
+
 ## Note
 
 This README was originally written using AI. The crate was not.
