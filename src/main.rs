@@ -5,13 +5,26 @@ use std::ffi::OsStr;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::PoisonError;
 
+use argh::FromArgs;
 use log::trace;
+
+/// compute a deterministic hash for a local rust crate
+#[derive(FromArgs)]
+struct CliArgs {
+    /// path to the relevant Cargo.toml file
+    #[argh(option)]
+    manifest_path: Option<PathBuf>,
+    /// do not update the Cargo.lock file, erroring if it does not exist or is not up to date
+    #[argh(switch)]
+    locked: bool,
+}
 
 fn main() {
     simple_logger::SimpleLogger::new()
@@ -20,26 +33,29 @@ fn main() {
         .init()
         .unwrap();
 
-    let mut args = std::env::args_os().skip(1);
-
-    let manifest_path = args.next().expect("expected an argument");
-    let manifest_path = Path::new(&manifest_path);
+    let CliArgs {
+        manifest_path,
+        locked,
+    } = argh::from_env();
 
     let cargo_path = std::env::var_os("CARGO_PATH");
     let cargo_path = cargo_path.as_deref().unwrap_or(OsStr::new("cargo"));
 
-    let mut cargo_tree = Command::new(cargo_path)
-        .arg("tree")
-        .arg("--all-features")
-        .arg("--manifest-path")
-        .arg(manifest_path)
-        .arg("--prefix")
-        .arg("none")
-        .arg("--format")
-        .arg("{p}|{f}|{r}")
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("failed to start cargo tree");
+    let mut cargo_tree =
+        Command::new(cargo_path)
+            .arg("tree")
+            .arg("--all-features")
+            .args(manifest_path.iter().flat_map(|manifest_path| {
+                [OsStr::new("--manifest-path"), manifest_path.as_os_str()]
+            }))
+            .args(locked.then_some("--locked"))
+            .arg("--prefix")
+            .arg("none")
+            .arg("--format")
+            .arg("{p}|{f}|{r}")
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("failed to start cargo tree");
 
     let mut key_values = BTreeMap::<Key, blake3::Hash>::new();
 
