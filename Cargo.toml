@@ -20,6 +20,10 @@ simple_logger = { version = "5", default-features = false, features = [
     "stderr",
 ] }
 
+[profile.release]
+debug = "line-tables-only"
+strip = "debuginfo"
+
 # The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"
