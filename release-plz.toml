@@ -1,0 +1,4 @@
+[[package]]
+name = "hash-crate"
+git_release_enable = false # GH releases are created by cargo-dist
+git_tag_enable = true
