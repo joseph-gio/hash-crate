@@ -25,6 +25,7 @@ jobs:
         name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Run release-plz
+        id: release
         uses: release-plz/action@v0.5
         with:
           command: release
@@ -32,6 +33,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
       - name: Trigger cargo-dist
+        if: steps.release.outputs.hash-crate--release_created
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ fromJson(steps.release.outputs.releases)[0].tag_name }}
