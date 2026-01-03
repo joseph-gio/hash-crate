@@ -122,7 +122,7 @@ checksum = "645cbb3a84e60b7531617d5ae4e57f7e27308f6445f5abf653209ea76dec8dff"
 
 [[package]]
 name = "hash-crate"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "argh",
  "blake3",
