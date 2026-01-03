@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.5](https://github.com/joseph-gio/hash-crate/compare/v0.0.4...v0.0.5) - 2026-01-03
+
+### Other
+
+- add cargo-dist config ([#7](https://github.com/joseph-gio/hash-crate/pull/7))
+
 ## [0.0.4](https://github.com/joseph-gio/hash-crate/compare/v0.0.3...v0.0.4) - 2026-01-02
 
 ### Added
