@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.6](https://github.com/joseph-gio/hash-crate/compare/v0.0.5...v0.0.6) - 2026-01-03
+
+### Other
+
+- fix release-plz action ([#11](https://github.com/joseph-gio/hash-crate/pull/11))
+- trigger cargo-dist from release-plz ([#9](https://github.com/joseph-gio/hash-crate/pull/9))
+
 ## [0.0.5](https://github.com/joseph-gio/hash-crate/compare/v0.0.4...v0.0.5) - 2026-01-03
 
 ### Other
