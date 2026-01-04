@@ -67,6 +67,12 @@ fn main() {
 
     dbg!(metadata.packages.len());
 
+    let package_map = metadata
+        .packages
+        .iter()
+        .map(|p| (&p.id, p))
+        .collect::<HashMap<_, _>>();
+
     // package ids corresponding to each of `bins`.
     let bin_packages = {
         let arbitrary_placeholder_package = metadata.packages.first().unwrap();
@@ -76,13 +82,9 @@ fn main() {
             std::iter::zip(bins.iter().map(String::as_str), &mut package_slots)
                 .collect::<HashMap<_, _>>();
 
-        let workspace_packages = metadata
-            .packages
-            .iter()
-            .filter(|p| metadata.workspace_members.contains(&p.id));
+        let workspace_packages = metadata.workspace_members.iter().map(|id| package_map[id]);
         'packages: for package in workspace_packages {
             for target in &package.targets {
-                dbg!(&target.name);
                 if !target.kind.contains(&cargo_metadata::TargetKind::Bin) {
                     continue;
                 }
@@ -122,7 +124,8 @@ fn main() {
     rayon::scope(|scope| {
         for &root_package in &bin_packages {
             scope.spawn(|scope| {
-                let hashed_info = hash_root_crate(root_package, &package_nodes, scope);
+                let hashed_info =
+                    hash_root_crate(root_package, &package_map, &package_nodes, scope);
                 hashes_per_package
                     .lock()
                     .unwrap()
@@ -159,10 +162,11 @@ struct HashedInfo {
     path_dependency_hashes: Arc<Mutex<BTreeSet<Key>>>,
 }
 
-fn hash_root_crate<'scope, 's>(
+fn hash_root_crate<'s>(
     root_package: &Package,
+    package_map: &HashMap<&PackageId, &'s Package>,
     packages_to_nodes: &HashMap<&PackageId, &Node>,
-    scope: &'scope rayon::Scope<'s>,
+    scope: &rayon::Scope<'s>,
 ) -> HashedInfo {
     let root_node = packages_to_nodes[&root_package.id];
 
@@ -177,21 +181,21 @@ fn hash_root_crate<'scope, 's>(
     let path_dependency_hashes = Arc::new(Mutex::new(BTreeSet::new()));
 
     collect_deps(
-        Path::new(&root_package.manifest_path).parent().unwrap(),
         &root_node.deps,
+        package_map,
         packages_to_nodes,
         &mut collected_package_hashes,
         &path_dependency_hashes,
         scope,
     );
 
-    fn collect_deps<'a, 'scope, 's>(
-        parent_package_path: &Path,
+    fn collect_deps<'a, 's>(
         deps: &'a [NodeDep],
+        package_map: &HashMap<&PackageId, &'s Package>,
         packages_to_nodes: &HashMap<&PackageId, &'a Node>,
         collected_package_hashes: &mut BTreeMap<&'a PackageId, blake3::Hasher>,
         path_dependency_hashes: &Arc<Mutex<BTreeSet<Key>>>,
-        scope: &'scope rayon::Scope<'s>,
+        scope: &rayon::Scope<'s>,
     ) {
         for dep in deps {
             let node = packages_to_nodes[&dep.pkg];
@@ -214,22 +218,19 @@ fn hash_root_crate<'scope, 's>(
                 }
             }
 
-            if let Some(relative_path) = dep.pkg.repr.strip_prefix("path+") {
-                let mut relative_path =
-                    relative_path.strip_prefix("file:").unwrap_or(relative_path);
+            let package_info = package_map[&dep.pkg];
 
-                if let Some(i) = relative_path.rfind('#') {
-                    relative_path = &relative_path[..i];
-                }
-
-                let package_path = parent_package_path.join(relative_path);
+            if package_info.source.is_none() {
+                trace!("hashing local project `{}`", dep.pkg);
 
                 scope.spawn({
-                    let package_path = package_path.clone();
+                    let package_path = package_info
+                        .manifest_path
+                        .parent()
+                        .expect("couldn't get parent path for local dependency");
                     let path_dependency_hashes = Arc::clone(path_dependency_hashes);
                     move |_| {
-                        trace!("hashing path dependency `{}`", package_path.display());
-                        let hash = hash_directory(&package_path);
+                        let hash = hash_directory(package_path.as_std_path());
                         path_dependency_hashes
                             .lock()
                             .unwrap_or_else(PoisonError::into_inner)
@@ -238,8 +239,8 @@ fn hash_root_crate<'scope, 's>(
                 });
 
                 collect_deps(
-                    &package_path,
                     &node.deps,
+                    package_map,
                     packages_to_nodes,
                     collected_package_hashes,
                     path_dependency_hashes,
@@ -247,8 +248,8 @@ fn hash_root_crate<'scope, 's>(
                 );
             } else {
                 collect_deps(
-                    Path::new(""),
                     &node.deps,
+                    package_map,
                     packages_to_nodes,
                     collected_package_hashes,
                     path_dependency_hashes,
