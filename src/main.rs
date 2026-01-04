@@ -13,10 +13,11 @@ use std::sync::PoisonError;
 use argh::FromArgs;
 use cargo_metadata::MetadataCommand;
 use cargo_metadata::Node;
-use cargo_metadata::NodeDep;
 use cargo_metadata::Package;
 use cargo_metadata::PackageId;
 use log::trace;
+use rayon::iter::ParallelIterator as _;
+use rayon::slice::ParallelSlice as _;
 
 /// compute a deterministic hash for a local rust crate
 #[derive(FromArgs)]
@@ -143,7 +144,7 @@ fn main() {
 
             let path_dependencies = hashed_info.path_dependency_hashes.lock().unwrap();
             trace!(
-                "collecting hashes from {} path dependencies",
+                "collecting hashes from {} local packages",
                 path_dependencies.len()
             );
             for path_dep_hash in path_dependencies.iter() {
@@ -163,7 +164,7 @@ struct HashedInfo {
 }
 
 fn hash_root_crate<'s>(
-    root_package: &Package,
+    root_package: &'s Package,
     package_map: &HashMap<&PackageId, &'s Package>,
     packages_to_nodes: &HashMap<&PackageId, &Node>,
     scope: &rayon::Scope<'s>,
@@ -178,85 +179,67 @@ fn hash_root_crate<'s>(
 
     let mut collected_package_hashes = BTreeMap::new();
 
-    let path_dependency_hashes = Arc::new(Mutex::new(BTreeSet::new()));
+    let local_package_hashes = Arc::new(Mutex::new(BTreeSet::new()));
 
-    collect_deps(
-        &root_node.deps,
-        package_map,
-        packages_to_nodes,
-        &mut collected_package_hashes,
-        &path_dependency_hashes,
-        scope,
-    );
+    scope.spawn({
+        let package_path = root_package
+            .manifest_path
+            .parent()
+            .expect("couldn't get parent path for root package");
+        let path_dependency_hashes = Arc::clone(&local_package_hashes);
+        move |_| {
+            let hash = hash_directory(package_path.as_std_path());
+            path_dependency_hashes
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(Key(hash));
+        }
+    });
 
-    fn collect_deps<'a, 's>(
-        deps: &'a [NodeDep],
-        package_map: &HashMap<&PackageId, &'s Package>,
-        packages_to_nodes: &HashMap<&PackageId, &'a Node>,
-        collected_package_hashes: &mut BTreeMap<&'a PackageId, blake3::Hasher>,
-        path_dependency_hashes: &Arc<Mutex<BTreeSet<Key>>>,
-        scope: &rayon::Scope<'s>,
-    ) {
-        for dep in deps {
-            let node = packages_to_nodes[&dep.pkg];
+    let mut deps_to_walk = root_node.deps.iter().collect::<Vec<_>>();
+    while let Some(dep) = deps_to_walk.pop() {
+        let node = packages_to_nodes[&dep.pkg];
 
-            match collected_package_hashes.entry(&dep.pkg) {
-                Entry::Vacant(entry) => {
-                    let mut hasher = blake3::Hasher::new();
-                    hasher.update(dep.pkg.repr.as_bytes());
-                    for feature in &node.features {
-                        hasher.update(feature.as_bytes());
-                    }
-                    entry.insert(hasher);
+        match collected_package_hashes.entry(&dep.pkg) {
+            Entry::Vacant(entry) => {
+                let mut hasher = blake3::Hasher::new();
+                hasher.update(dep.pkg.repr.as_bytes());
+                for feature in &node.features {
+                    hasher.update(feature.as_bytes());
                 }
-                Entry::Occupied(entry) => {
-                    let hasher = entry.into_mut();
-                    for feature in &node.features {
-                        hasher.update(feature.as_bytes());
-                    }
-                    continue;
-                }
+                entry.insert(hasher);
             }
-
-            let package_info = package_map[&dep.pkg];
-
-            if package_info.source.is_none() {
-                trace!("hashing local project `{}`", dep.pkg);
-
-                scope.spawn({
-                    let package_path = package_info
-                        .manifest_path
-                        .parent()
-                        .expect("couldn't get parent path for local dependency");
-                    let path_dependency_hashes = Arc::clone(path_dependency_hashes);
-                    move |_| {
-                        let hash = hash_directory(package_path.as_std_path());
-                        path_dependency_hashes
-                            .lock()
-                            .unwrap_or_else(PoisonError::into_inner)
-                            .insert(Key(hash));
-                    }
-                });
-
-                collect_deps(
-                    &node.deps,
-                    package_map,
-                    packages_to_nodes,
-                    collected_package_hashes,
-                    path_dependency_hashes,
-                    scope,
-                );
-            } else {
-                collect_deps(
-                    &node.deps,
-                    package_map,
-                    packages_to_nodes,
-                    collected_package_hashes,
-                    path_dependency_hashes,
-                    scope,
-                );
+            Entry::Occupied(entry) => {
+                let hasher = entry.into_mut();
+                for feature in &node.features {
+                    hasher.update(feature.as_bytes());
+                }
+                continue;
             }
         }
+
+        let package_info = package_map[&dep.pkg];
+
+        if package_info.source.is_none() {
+            trace!("hashing local project `{}`", dep.pkg);
+
+            scope.spawn({
+                let package_path = package_info
+                    .manifest_path
+                    .parent()
+                    .expect("couldn't get parent path for local dependency");
+                let path_dependency_hashes = Arc::clone(&local_package_hashes);
+                move |_| {
+                    let hash = hash_directory(package_path.as_std_path());
+                    path_dependency_hashes
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .insert(Key(hash));
+                }
+            });
+        }
+
+        deps_to_walk.extend(&node.deps);
     }
 
     eprintln!(
@@ -264,13 +247,24 @@ fn hash_root_crate<'s>(
         collected_package_hashes.len()
     );
 
-    for node_hasher in collected_package_hashes.values() {
-        hasher.update(node_hasher.finalize().as_bytes());
+    let collected_package_hashes = collected_package_hashes.values().collect::<Vec<_>>();
+    let hashed_chunks = collected_package_hashes
+        .par_chunks(128)
+        .map(|hashes| {
+            let mut hasher = blake3::Hasher::new();
+            for &collected_hasher in hashes {
+                hasher.update(collected_hasher.finalize().as_bytes());
+            }
+            hasher.finalize()
+        })
+        .collect::<Vec<_>>();
+    for chunk_hash in hashed_chunks {
+        hasher.update(chunk_hash.as_bytes());
     }
 
     HashedInfo {
         first_hash: hasher.finalize(),
-        path_dependency_hashes,
+        path_dependency_hashes: local_package_hashes,
     }
 }
 
