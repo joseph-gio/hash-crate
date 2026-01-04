@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.9](https://github.com/joseph-gio/hash-crate/compare/v0.0.8...v0.0.9) - 2026-01-04
+
+### Added
+
+- use cargo-metadata and support multiple binaries in same workspace ([#18](https://github.com/joseph-gio/hash-crate/pull/18))
+
+### Other
+
+- strip debuginfo ([#16](https://github.com/joseph-gio/hash-crate/pull/16))
+
 ## [0.0.8](https://github.com/joseph-gio/hash-crate/compare/v0.0.7...v0.0.8) - 2026-01-03
 
 ### Other
